@@ -1,30 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import Web3 from "web3";
 import { useWeb3React } from "@web3-react/core";
-import {
-  Button,
-  Box,
-  Text,
-  Input,
-  Switch,
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalFooter,
-  ModalBody,
-  ModalCloseButton,
-} from "@chakra-ui/react";
+import { Button, Box, Text, Input, Switch, Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, ModalBody, ModalCloseButton } from "@chakra-ui/react";
 import { useDisclosure, useToast } from "@chakra-ui/react";
 import { injected } from "../config/wallets";
 import abi from "./abi.json";
-import { AbiItem } from "web3-utils";
-
-declare global {
-  interface Window {
-    ethereum: any;
-  }
-}
+import { ethers } from "ethers";
+import { Web3Provider } from "@ethersproject/providers";
 
 export default function ConnectButton() {
   const { account, active, activate, library, deactivate } = useWeb3React();
@@ -34,25 +15,33 @@ export default function ConnectButton() {
   const [babyBalance, setBabyBalance] = useState<string>("0");
   const [mode, setMode] = useState<string>("BNB");
   const [recieverAdd, setRecieverAdd] = useState<string>("");
-  const [sendAmount, setSendAmount] = useState<number>(0);
+  const [sendAmount, setSendAmount] = useState<string>("0"); // Change to string
   const [gasFee, setGasFee] = useState<string>("");
-  const [gasLimit, setGasLimit] = useState<number>(0);
+  const [gasLimit, setGasLimit] = useState<string>("0"); // Change to string
   const toast = useToast();
 
-  function handleConnectWallet() {
-    connected ? deactivate() : activate(injected);
-    setConnected(!connected);
+  async function handleConnectWallet() {
+    try {
+      if (!active) {
+        await activate(injected);
+      } else {
+        deactivate();
+      }
+      setConnected(!connected);
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   function handleMode() {
     setMode(mode === "BNB" ? "BabyDoge" : "BNB");
   }
 
-  function handleChangeAddress(event: any) {
+  function handleChangeAddress(event: React.ChangeEvent<HTMLInputElement>) {
     setRecieverAdd(event.target.value);
   }
 
-  function handleChangeAmount(event: any) {
+  function handleChangeAmount(event: React.ChangeEvent<HTMLInputElement>) {
     setSendAmount(event.target.value);
   }
 
@@ -63,109 +52,119 @@ export default function ConnectButton() {
         status: "error",
       });
     }
-    if (!sendAmount || sendAmount === 0) {
+    if (!sendAmount || sendAmount === "0") {
       return toast({
         description: "Please input send amount",
         status: "error",
       });
     }
 
-    const web3 = new Web3(library.provider);
-    var block = await web3.eth.getBlock("latest");
-    setGasLimit(block.gasLimit);
+    const provider = library.getSigner();
 
-    const gasPrice = await web3.eth.getGasPrice();
-    setGasFee(toGWei(web3, gasPrice.toString()));
+    const gasLimit = await provider.estimateGas({
+      to: recieverAdd,
+      value: ethers.utils.parseEther(sendAmount),
+    });
+    setGasLimit(gasLimit.toString());
+
+    const gasPrice = await provider.getGasPrice();
+    setGasFee(ethers.utils.formatUnits(gasPrice, "gwei"));
 
     onOpen();
   }
 
   const sendBaby = useCallback(async () => {
-    const web3 = new Web3(library.provider);
-    const ctx = new web3.eth.Contract(
-      abi as AbiItem[],
-      "0xc748673057861a797275CD8A068AbB95A902e8de"
-    );
+    if (!library || !account || !recieverAdd || sendAmount === "0") {
+      return;
+    }
 
-    await ctx.methods.approve(account, sendAmount).call();
-    await ctx.methods.transfer(recieverAdd, sendAmount).send();
-  }, [account, library]);
+    try {
+      const provider = library.getSigner();
+
+      const ctx = new ethers.Contract(
+        "0xc748673057861a797275CD8A068AbB95A902e8de",
+        abi,
+        provider
+      );
+
+      const tx = await ctx.approve(recieverAdd, ethers.utils.parseEther(sendAmount));
+      await tx.wait();
+
+      toast({
+        description: "Transaction successful",
+        status: "success",
+      });
+    } catch (error) {
+      console.error(error);
+      toast({
+        description: "Transaction failed",
+        status: "error",
+      });
+    }
+  }, [library, account, recieverAdd, sendAmount, toast]);
 
   const sendAction = useCallback(async () => {
-    const web3 = new Web3(library.provider);
-
-    const txParams: any = {
-      from: account,
-      to: recieverAdd,
-
-      value: Web3.utils.toWei(sendAmount.toString(), "ether"),
-    };
-    console.log(txParams);
-    await web3.eth.sendTransaction(txParams, (error: any, hash: any) => {
-      if (error) {
-        console.error(error);
-      } else {
-        console.log(`Transaction hash: ${hash}`);
-        web3.eth.getTransaction(hash, (error, transaction) => {
-          if (error) {
-            return;
-          }
-
-          console.log(`Transaction data: ${transaction?.input}`);
-        });
-      }
-    });
-    onClose();
-    valueload();
-  }, [account, library, recieverAdd, sendAmount]);
-
-  function fromWei(
-    web3: { utils: { fromWei: (arg0: any) => any } },
-    val: { toString: () => any }
-  ) {
-    if (val) {
-      val = val.toString();
-      return web3.utils.fromWei(val);
-    } else {
-      return "0";
+    if (!library || !account || !recieverAdd || sendAmount === "0") {
+      return;
     }
+
+    try {
+      const provider = library.getSigner();
+
+      const tx = await provider.sendTransaction({
+        to: recieverAdd,
+        value: ethers.utils.parseEther(sendAmount),
+      });
+      await tx.wait();
+
+      toast({
+        description: "Transaction successful",
+        status: "success",
+      });
+      onClose();
+      valueload();
+    } catch (error) {
+      console.error(error);
+      toast({
+        description: "Transaction failed",
+        status: "error",
+      });
+    }
+  }, [library, account, recieverAdd, sendAmount, toast, onClose, valueload]);
+
+async function valueload() {
+  if (!library || !account) {
+    return;
   }
 
-  function toGWei(web3: any, val: string) {
-    if (val) {
-      return web3.utils.fromWei(val, "gwei");
-    } else {
-      return "0";
-    }
-  }
+  try {
+    const provider = new Web3Provider(library.provider); // Usar Web3Provider
 
-  const valueload = useCallback(async () => {
-    const web3 = new Web3(library.provider);
-    const ctx = new web3.eth.Contract(
-      abi as AbiItem[],
-      "0xc748673057861a797275CD8A068AbB95A902e8de"
+    const balanceBNB = await provider.getBalance(account);
+    setBalance(ethers.utils.formatEther(balanceBNB));
+
+    const ctx = new ethers.Contract(
+      "0xc748673057861a797275CD8A068AbB95A902e8de",
+      abi,
+      provider
     );
-    console.log(ctx);
-    if (account) {
-      const value = await web3.eth.getBalance(account);
-      setBalance(Number(fromWei(web3, value)).toFixed(5));
 
-      const gasPrice = await web3.eth.getGasPrice();
-      setGasFee(gasPrice);
-
-      // const value1 = await ctx.methods.balanceOf(account).call({gasPrice: Number(gasPrice) * 100});
-      // console.log('[baby amount]', value1)
-      // setBabyBalance(value1);
-    }
-  }, [account, library]);
+    const babyBalance = await ctx.balanceOf(account);
+    setBabyBalance(ethers.utils.formatUnits(babyBalance, "ether"));
+  } catch (error) {
+    console.error(error);
+  }
+}
 
   useEffect(() => {
-    active && valueload();
-  }, [account, active, valueload]);
+    if (active) {
+      valueload();
+    }
+  }, [active]);
 
   return (
     <>
-    <h1 className="title">Metamask login demo from Enva Division</h1>
+      <h1 className="title">Metamask login demo from Enva Division</h1>
       {account ? (
         <Box
           display="block"

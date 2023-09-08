@@ -70,6 +70,7 @@
     ]
   },
   "devDependencies": {
+    "ethers": "^5.0.0",
     "@chakra-ui/react": "^2.5.5",
     "@ethersproject/providers": "^5.7.2",
     "@types/web3": "^1.2.2",
